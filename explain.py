@@ -43,3 +43,13 @@ def shap_explain(text):
     shap_values = explainer(vec_dense)
     
     return shap_values
+def generate_summary(explanation):
+    spam_words = [w for w, s in explanation if s > 0][:3]
+    safe_words = [w for w, s in explanation if s < 0][:3]
+
+    if spam_words:
+        return f"This email looks like SPAM because of words like {', '.join(spam_words)}."
+    elif safe_words:
+        return f"This email looks SAFE due to words like {', '.join(safe_words)}."
+    else:
+        return "No strong indicators found."
