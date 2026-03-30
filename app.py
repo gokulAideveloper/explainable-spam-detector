@@ -2,12 +2,23 @@ import streamlit as st
 import pickle
 import json
 import hashlib
+import os
 from datetime import datetime
 import matplotlib.pyplot as plt
-from explain import explain
+import pandas as pd
+import google.generativeai as genai
+
+from explain import explain, generate_summary
 
 # ==============================
-# 🔐 AUTH FUNCTIONS (TOP)
+# 🔐 GEMINI CONFIG (SAFE)
+# ==============================
+
+genai.configure(api_key=os.getenv("API_KEY"))
+model_ai = genai.GenerativeModel("gemini-pro")
+
+# ==============================
+# 🔐 AUTH FUNCTIONS
 # ==============================
 
 def hash_password(password):
@@ -17,10 +28,7 @@ def load_users():
     try:
         with open("users.json", "r") as f:
             data = json.load(f)
-            if isinstance(data, dict):
-                return data
-            else:
-                return {}  # fix corrupted file
+            return data if isinstance(data, dict) else {}
     except:
         return {}
 
@@ -38,12 +46,10 @@ def register(username, password):
 
 def login(username, password):
     users = load_users()
-    if username in users and users[username] == hash_password(password):
-        return True
-    return False
+    return username in users and users[username] == hash_password(password)
 
 # ==============================
-# 📜 HISTORY FUNCTIONS
+# 📜 HISTORY
 # ==============================
 
 def load_history():
@@ -60,36 +66,50 @@ def save_history(entry):
         json.dump(history, f)
 
 # ==============================
-# 🎨 UI SETTINGS
+# 🎨 UI CONFIG
 # ==============================
 
 st.set_page_config(page_title="Spam Detector", layout="centered")
 
 st.markdown("""
 <style>
-body {background-color:#0f172a; color:white;}
-.stTextArea textarea {
-    background:#1e293b; color:white; border-radius:10px;
+body {
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    color: white;
+}
+.card {
+    background: rgba(255,255,255,0.05);
+    padding: 20px;
+    border-radius: 15px;
+    backdrop-filter: blur(10px);
+    margin-bottom: 20px;
+}
+.title {
+    text-align: center;
+    font-size: 40px;
+    font-weight: bold;
+    color: #38bdf8;
+}
+.subtitle {
+    text-align: center;
+    color: #94a3b8;
+    margin-bottom: 20px;
 }
 .stButton button {
-    background:#6366f1; color:white; border-radius:10px;
+    background: linear-gradient(135deg, #6366f1, #4f46e5);
+    color: white;
+    border-radius: 10px;
+}
+.stTextArea textarea {
+    background: #1e293b;
+    color: white;
+    border-radius: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
-st.markdown("""
-<h1 style='text-align:center; font-size:42px; color:#38bdf8;'>
-🚀 Explainable Spam Detector
-</h1>
-<p style='text-align:center; color:gray;'>
-AI-powered email analysis with explainability
-</p>
-""", unsafe_allow_html=True)
-st.title("📧 Explainable Spam Detector")
-st.markdown('<div style="padding:20px; border-radius:15px; background:#1e293b;">', unsafe_allow_html=True)
 
-# your result here
-
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="title">🚀 Explainable Spam Detector</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">AI-powered spam detection with chatbot</div>', unsafe_allow_html=True)
 
 # ==============================
 # 🔐 LOGIN SYSTEM
@@ -101,16 +121,15 @@ if "logged_in" not in st.session_state:
 menu = st.sidebar.selectbox("Menu", ["Login", "Register"])
 
 if not st.session_state.logged_in:
-
     username = st.sidebar.text_input("Username")
     password = st.sidebar.text_input("Password", type="password")
 
     if menu == "Register":
         if st.sidebar.button("Register"):
             if register(username, password):
-                st.sidebar.success("Registered successfully!")
+                st.success("Registered successfully!")
             else:
-                st.sidebar.error("User already exists")
+                st.error("User already exists")
 
     if menu == "Login":
         if st.sidebar.button("Login"):
@@ -119,12 +138,9 @@ if not st.session_state.logged_in:
                 st.success("Login successful!")
                 st.rerun()
             else:
-                st.sidebar.error("Invalid credentials")
+                st.error("Invalid credentials")
 
     st.stop()
-    if st.sidebar.button("Logout"):
-        st.session_state.logged_in = False
-    st.rerun()
 
 # ==============================
 # 🤖 LOAD MODEL
@@ -144,23 +160,45 @@ def highlight_text(text, explanation):
     result = ""
     for word in words:
         score = exp_dict.get(word.lower(), 0)
-
-        if score > 0:
-            color = "red"
-        elif score < 0:
-            color = "green"
-        else:
-            color = "white"
-
+        color = "red" if score > 0 else "green" if score < 0 else "white"
         result += f"<span style='color:{color}; font-weight:bold'>{word}</span> "
-
     return result
+
+# ==============================
+# 🤖 CHATBOT FUNCTION (SAFE)
+# ==============================
+
+def chatbot_response(user_msg, email, explanation, pred):
+    try:
+        prompt = f"""
+        Email: {email}
+
+        Prediction: {'Spam' if pred==1 else 'Not Spam'}
+
+        Important words: {[w for w,s in explanation[:5]]}
+
+        User question: {user_msg}
+
+        Explain clearly in simple language.
+        """
+
+        response = model_ai.generate_content(prompt)
+        return response.text
+
+    except:
+        return "⚠️ AI error. Check API key or internet."
 
 # ==============================
 # 📝 INPUT
 # ==============================
 
-email = st.text_area("Enter Email Text")
+st.markdown('<div class="card">', unsafe_allow_html=True)
+email = st.text_area("📩 Enter Email Text")
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Chat memory
+if "chat" not in st.session_state:
+    st.session_state.chat = []
 
 # ==============================
 # 🔍 PREDICTION
@@ -172,87 +210,86 @@ if st.button("Check"):
     pred = model.predict(vec)[0]
     prob = model.predict_proba(vec)[0][1]
 
-    st.progress(int(prob * 100))
+    st.session_state.explanation = explain(email)
+    st.session_state.pred = pred
+
+    st.markdown('<div class="card">', unsafe_allow_html=True)
 
     if pred == 1:
-        st.error(f"Spam 🚨 ({prob*100:.2f}%)")
+        st.error(f"🚨 Spam ({prob*100:.2f}%)")
     else:
-        st.success(f"Not Spam ✅ ({(1-prob)*100:.2f}%)")
+        st.success(f"✅ Not Spam ({(1-prob)*100:.2f}%)")
 
+    st.progress(int(prob * 100))
     st.write("Confidence:", prob)
 
-    # Save history
+    st.markdown('</div>', unsafe_allow_html=True)
+
     save_history({
         "text": email,
         "prediction": "Spam" if pred == 1 else "Not Spam",
         "probability": float(prob),
         "time": str(datetime.now())
     })
- # =================================
-    #Bottom
-# ===================================
+
+    explanation = st.session_state.explanation
+
+    st.subheader("🔍 Explanation")
+    st.markdown(highlight_text(email, explanation), unsafe_allow_html=True)
+
+    st.subheader("🧠 AI Explanation")
+    st.info(generate_summary(explanation))
+
+# ==============================
+# 🤖 CHATBOT UI
+# ==============================
+
+st.markdown("---")
+st.subheader("🤖 AI Chat Assistant")
+
+user_input = st.text_input("Ask about the email")
+
+if st.button("Send"):
+    if "explanation" in st.session_state:
+        reply = chatbot_response(
+            user_input,
+            email,
+            st.session_state.explanation,
+            st.session_state.pred
+        )
+        st.session_state.chat.append(("You", user_input))
+        st.session_state.chat.append(("Bot", reply))
+    else:
+        st.warning("Check email first")
+
+for role, msg in st.session_state.chat:
+    st.write(f"{'🧑' if role=='You' else '🤖'} {msg}")
+
+# ==============================
+# 📊 ANALYTICS
+# ==============================
+
 st.markdown("---")
 st.subheader("📊 Analytics Dashboard")
 
 history = load_history()
 
-if len(history) > 0:
-    total = len(history)
-    spam = sum(1 for h in history if h["prediction"] == "Spam")
-    not_spam = total - spam
+if history:
+    df = pd.DataFrame(history)
 
     col1, col2, col3 = st.columns(3)
-
-    col1.metric("Total Checked", total)
-    col2.metric("Spam Emails", spam)
-    col3.metric("Safe Emails", not_spam)
-
-    import pandas as pd
-    df = pd.DataFrame(history)
+    col1.metric("Total", len(df))
+    col2.metric("Spam", (df["prediction"] == "Spam").sum())
+    col3.metric("Safe", (df["prediction"] == "Not Spam").sum())
 
     st.bar_chart(df["prediction"].value_counts())
 else:
     st.info("No data yet")
-    # ==============================
-    # 📊 EXPLANATION
-    # ==============================
-
-    explanation = explain(email)
-
-    st.subheader("Explanation")
-    for word, score in explanation[:5]:
-        st.write(f"{word} → {score:.3f}")
-
-    st.markdown(highlight_text(email, explanation), unsafe_allow_html=True)
-
-    # ==============================
-    # 📈 GRAPH
-    # ==============================
-
-    st.subheader("📊 Word Impact Graph")
-
-    top = sorted(explanation[:10], key=lambda x: x[1])
-    words = [w for w, s in top]
-    scores = [s for w, s in top]
-    colors = ["red" if s > 0 else "green" for s in scores]
-
-    plt.figure()
-    plt.barh(words, scores, color=colors)
-    plt.xlabel("Impact")
-    plt.title("Top Words")
-
-    st.pyplot(plt)
 
 # ==============================
-# 📜 HISTORY VIEW
+# 📜 SIDEBAR HISTORY
 # ==============================
 
-st.sidebar.subheader("History")
-
-history = load_history()
-
-for item in history[-5:]:
-    st.sidebar.write(f"{item['prediction']} - {item['time']}")
 st.sidebar.subheader("Recent Activity")
 
 for item in history[-5:][::-1]:
