@@ -7,13 +7,15 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import pandas as pd
 import google.generativeai as genai
-
+import numpy as py
 from explain import explain, generate_summary
+
 
 # ==============================
 # 🔐 GEMINI CONFIG (SAFE)
 # ==============================
-
+import google.generativeai as genai
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 genai.configure(api_key=os.getenv("API_KEY"))
 model_ai = genai.GenerativeModel("gemini-pro")
 
